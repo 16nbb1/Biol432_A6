@@ -1,0 +1,193 @@
+---
+title: "Assignment 6"
+output: html_notebook
+---
+
+* Nadejda Boev (20056079)
+* Due Date - 2022/03/02
+* Github user - 16nbb1
+* Github link - https://github.com/16nbb1/Biol432_A6
+
+# Assignment Brief
+
+After graduating from Queen's, you land a job as a research scientist at the Canadian Public Health Agency in Canada when a clinician sends you a sample of blood from a patient with life-threatening illness.
+
+You use nanopore sequencing of the patient’s biofluids and a custom bioinformatics pipeline that filters out human DNA. Of the remaining (non-human) DNA, you find one sequence that seems odd. 
+
+Use the knowledge you have gained to generate an alignment and build a phylogeny in R to analyze the sequence. Determine if it is human or another organism. Write a report in R Markdown explaining to the clinician whether this is something to be concerned about, using graphics with text to explain your analysis. Remember to pay attention to formatting to make the report look professional.
+
+
+## Accessing libraries we'll need, most are dependent on BiocManager
+
+```{r}
+library(BiocManager)
+library(genbankr)
+library(Biostrings)
+library(ggtree)
+library(annotate)
+library(muscle)
+library(reshape2)
+library(rentrez)
+library(ape)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+```
+
+## Sequence provided
+
+```{r}
+seq = 'ATGTCTGATAATGGACCCCAAAATCAGCGAAATGCACCCCGCATTACGTTTGGTGGACCCTCAGATTCAACTGGCAGTAACCAGAATGGAGAACGCAGTGGGGCGCGATCAAAACAACGTCGGCCCCAAGGTTTACCCAATAATACTGCGTCTTGGTTCACCGCTCTCACTCAACATGGCAAGGAAGACCTTAAATTCCCTCGAGGACAAGGCGTTCCAATTAACACCAATAGCAGTCCAGATGACCAAATTGGCTACTACCGAAGAGCTACCAGACGAATTCGTGGTGGTGACGGTAAAATGAAAGATCTCAGTCCAAGATGGTATTTCTACTACCTAGGAACTGGGCCAGAAGCTGGACTTCCCTATGGTGCTAACAAAGACGGCATCATATGGGTTGCAACTGAGGGAGCCTTGAATACACCAAAAGATCACATTGGCACCCGCAATCCTGCTAACAATGCTGCAATCGTGCTACAACTTCCTCAAGGAACAACATTGCCAAAAGGCTTCTACGCAGAAGGGAGCAGAGGCGGCAGTCAAGCCTCTTCTCGTTCCTCATCACGTAGTCGCAACAGTTCAAGAAATTCAACTCCAGGCAGCAGTAGGGGAACTTCTCCTGCTAGAATGGCTGGCAATGGCGGTGATGCTGCTCTTGCTTTGCTGCTGCTTGACAGATTGAACCAGCTTGAGAGCAAAATGTCTGGTAAAGGCCAACAACAACAAGGCCAAACTGTCACTAAGAAATCTGCTGCTGAGGCTTCTAAGAAGCCTCGGCAAAAACGTACTGCCACTAAAGCATACAATGTAACACAAGCTTTCGGCAGACGTGGTCCAGAACAAACCCAAGGAAATTTTGGGGACCAGGAACTAATCAGACAAGGAACTGATTACAAACATTGGCCGCAAATTGCACAATTTGCCCCCAGCGCTTCAGCGTTCTTCGGAATGTCGCGCATTGGCATGGAAGTCACACCTTCGGGAACGTGGTTGACCTACACAGGTGCCATCAAATTGGATGACAAAGATCCAAATTTCAAAGATCAAGTCATTTTGCTGAATAAGCATATTGACGCATACAAAACATTCCCACCAACAGAGCCTAAAAAGGACAAAAAGAAGAAGGCTGATGAAACTCAAGCCTTACCGCAGAGACAGAAGAAACAGCAAACTGTGACTCTTCTTCCTGCTGCAGATTTGGATGATTTCTCCAAACAATTGCAACAATCCATGAGCAGTGCTGACTCAACTCAGGCCTAA'
+
+```
+
+## Searching for sequence using NCBI's blast via blastSequences function
+
+We will output the top 10 hits as a dataframe
+
+```{r}
+myst_blast = blastSequences(seq, as='data.frame', hitListSize = 10, timeout = 600)
+```
+
+Investigating the Accession numbers from our Blast search
+
+```{r}
+(myst_blast$Hit_accession)
+```
+
+
+## Making a MSA using Muscle
+
+We need to feed in the sequences from the table, collapse, unlist them and convert them into DNAStringSet sequences muscle can use.We then run the MSA using default parameters
+
+```{r}
+myst_blastDNAstring = 
+  myst_blast$Hsp_hseq %>%
+  as.character %>%
+  lapply(.,paste0,collapse="") %>%
+  unlist %>%
+  DNAStringSet
+
+# Allows for unique IDs among sequences that may be similar
+names(myst_blastDNAstring)<-paste(1:nrow(myst_blast),myst_blast$Hit_accession, sep='_')
+
+BbAlign<-muscle::muscle(myst_blastDNAstring, quiet=T)
+```
+
+## Inspecting/ Preprocessing
+
+Since we are using sequencing, specifically nanopore sequencing, we should confirm if there is variation in the length of sequences for our 10 hits
+
+```{r}
+SeqLen<-as.numeric(lapply(myst_blastDNAstring,length))
+
+plot1 = qplot(SeqLen)+
+  theme_bw() +
+  xlab ('Sequence length')+
+  ylab('Number of sequences')
+```
+
+## Distance matrix
+
+We are interested in pairwise comparisons across for each sequence
+  - Note: all the values are 0. 
+
+```{r}
+BBSubAlignBin <- as.DNAbin(BbAlign)
+
+# We picked the K80 model
+(BbDM<-dist.dna(BBSubAlignBin, model="K80"))
+
+# class(BbDM)
+# length(BbDM)
+```
+
+We need to make a linear matrix we can plot as a heatmap then "melt" the matrix so we have a dataframe we can search rows/columns from
+
+```{r}
+(BbDMmat<-as.matrix(BbDM))
+#dim(BbDMmat)
+```
+
+```{r}
+(PDat<-melt(BbDMmat))
+#dim(PDat)
+```
+
+Now we can plot the heatmap
+- Colors with a value of 0, are NOT different
+
+```{r}
+plot2 = ggplot(data = PDat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile()+
+  theme_bw() +
+  xlab ('Sequence length')+
+  ylab('Number of sequences')+
+  theme(axis.text.x = element_text(angle = 20, vjust = 0.5, hjust=1))
+```
+
+## Building a tree
+We'll use an NJ approach when building tree
+  - Note there are 10 tips as we were expecting
+
+```{r}
+(BbTree<-nj(BbDM))
+#str(BbTree)
+# class(BbTree), "phylo"
+```
+
+## Visualizing the tree
+
+Since we aren't expecting major differences based on Figure 2, we won't prune this tree 
+
+```{r}
+plot3 = ggtree(BbTree) +
+  geom_tiplab(hjust=.00003)+
+  xlim(0, 10)
+```
+
+Visualizing relationships instead
+
+```{r}
+ggtree(BbTree,branch.length='none')+
+  geom_tiplab(hjust=.0003)+
+  xlim(0, 10)
+```
+
+# Conclusions for Clinician
+
+To begin, with preprocessing, we found all the sequences are the same length (Figure 1) This means our alignment will have no gapping
+
+```{r}
+ggdraw(add_sub(plot1, size =10,
+               'Figure 1. Histogram of length of sequences (n=10) from Top 10 NCBI hits which matched to 
+               Human isolate, unknown sequence.')) 
+```
+
+We found the distances matrices showed pairwise distances were all 0. Further confirmed with a pairwise heatmap (Figure 2). This would be consistent with all 10 sequences having the same sequence. 
+
+```{r}
+ggdraw(add_sub(plot2, size =10,
+               'Figure 2. Heatmap of pairwise distances among  Top 10 NCBI hits which matched to 
+               Human isolate, unknown sequence.')) 
+```
+
+We found there is not variation in the sequences, confirmed with no branches in the phylogenetic tree (Figure 3)
+
+```{r}
+ggdraw(add_sub(plot3, size =10,
+               'Figure 3. Phylogenetic tree of Top 10 NCBI hits which matched to 
+               Human isolate, unknown sequence once aligned with Muscle')) 
+```
+
+```{r}
+myst_blast$Hit_def
+```
+
+
+Upon inspection, these samples map to the SARS-CoV-2 sequence, therefore we may generally argue, given the transmissibility this is a concerning finding. If the analysis' purpose is to surveil for new strains or concerning mutations, we can confirm there is no variation in these sequences (Figure 2,3)
+
+It is however interestingly, some sequences map both to sequences found in both the USA and South Africa, potentially indicating a sick individual traveled and carried this version of the virus and infected others. 
+
+
+
