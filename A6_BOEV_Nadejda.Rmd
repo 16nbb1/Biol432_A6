@@ -43,7 +43,7 @@ seq = 'ATGTCTGATAATGGACCCCAAAATCAGCGAAATGCACCCCGCATTACGTTTGGTGGACCCTCAGATTCAACTG
 
 ## Searching for sequence using NCBI's blast via blastSequences function
 
-We will output the top 10 hits as a dataframe
+We will output the top 10 hits (hitListSize) as a dataframe
 
 ```{r}
 myst_blast = blastSequences(seq, as='data.frame', hitListSize = 10, timeout = 600)
@@ -71,6 +71,7 @@ myst_blastDNAstring =
 # Allows for unique IDs among sequences that may be similar
 names(myst_blastDNAstring)<-paste(1:nrow(myst_blast),myst_blast$Hit_accession, sep='_')
 
+# Making an alignment with Muscle
 BbAlign<-muscle::muscle(myst_blastDNAstring, quiet=T)
 ```
 
@@ -79,8 +80,10 @@ BbAlign<-muscle::muscle(myst_blastDNAstring, quiet=T)
 Since we are using sequencing, specifically nanopore sequencing, we should confirm if there is variation in the length of sequences for our 10 hits
 
 ```{r}
+# We're going to pull the length of the sequence from the myst_blastDNAstring object
 SeqLen<-as.numeric(lapply(myst_blastDNAstring,length))
 
+# Plotting length
 plot1 = qplot(SeqLen)+
   theme_bw() +
   xlab ('Sequence length')+
@@ -93,6 +96,7 @@ We are interested in pairwise comparisons across for each sequence
   - Note: all the values are 0. 
 
 ```{r}
+# Storing the aligned sequence in "internal" format
 BBSubAlignBin <- as.DNAbin(BbAlign)
 
 # We picked the K80 model
@@ -105,6 +109,7 @@ BBSubAlignBin <- as.DNAbin(BbAlign)
 We need to make a linear matrix we can plot as a heatmap then "melt" the matrix so we have a dataframe we can search rows/columns from
 
 ```{r}
+# Makes 1 long dataframe instead of matrix
 (BbDMmat<-as.matrix(BbDM))
 #dim(BbDMmat)
 ```
@@ -141,6 +146,7 @@ We'll use an NJ approach when building tree
 Since we aren't expecting major differences based on Figure 2, we won't prune this tree 
 
 ```{r}
+# Plotting the phylogenetic tree
 plot3 = ggtree(BbTree) +
   geom_tiplab(hjust=.00003)+
   xlim(0, 10)
@@ -187,7 +193,6 @@ myst_blast$Hit_def
 
 Upon inspection, these samples map to the SARS-CoV-2 sequence, therefore we may generally argue, given the transmissibility this is a concerning finding. If the analysis' purpose is to surveil for new strains or concerning mutations, we can confirm there is no variation in these sequences (Figure 2,3)
 
-It is however interestingly, some sequences map both to sequences found in both the USA and South Africa, potentially indicating a sick individual traveled and carried this version of the virus and infected others. 
 
 
 
